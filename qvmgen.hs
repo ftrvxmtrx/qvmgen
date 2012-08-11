@@ -35,7 +35,7 @@ qvmgenOpts argv =
   case getOpt RequireOrder options argv of
     (o, n, [])   -> return (o, n)
     (_, _, errs) -> ioError (userError $ concat errs ++ usageInfo header options)
-      where header = "Usage: qvmgen [OPTION...] CFLAGS..."
+      where header = "Usage: qvmgen [OPTION...] -- CFLAGS..."
 
 -- |Checks if the declaration is a Quake VM builtin.
 isBuiltin :: FilePath -> DeclEvent -> Bool
