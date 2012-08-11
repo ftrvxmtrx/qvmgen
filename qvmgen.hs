@@ -5,7 +5,6 @@ import Control.Applicative (liftA)
 import Control.Arrow
 import Control.Monad (forM_)
 import Data.Map (Map, toList)
-import Data.Maybe (fromMaybe)
 import Language.C
 import Language.C.Analysis
 import Language.C.Comments (comments)
