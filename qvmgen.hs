@@ -16,7 +16,7 @@ import System.Environment (getArgs)
 data Flag = Verbose
           | Input FilePath
           | Output FilePath
-          deriving (Eq, Show)
+          deriving Eq
 
 -- |Alias to a map of functions declarations.
 type GObjs = Map Ident IdentDecl
