@@ -59,12 +59,12 @@ getBuiltins cflags input =
     getBuiltins = gObjs . filterGlobalDecls (isBuiltin input) . fst
 
 -- |Generates Quake VM source code.
-gen :: [String] -> FilePath -> FilePath -> IO ()
-gen cflags input output = do
+gen :: [String] -> (FilePath, FilePath) -> IO ()
+gen cflags (input, output) = do
   cs <- comments input
   getBuiltins cflags input >>= print . map fst . toList
 
 main = do
   (args, cflags) <- getArgs >>= qvmgenOpts
   let verbose = Verbose `elem` args
-  zip [x | Input x <- args] [x | Output x <- args] `forM_` (uncurry $ gen cflags)
+  zip [x | Input x <- args] [x | Output x <- args] `forM_` gen cflags
