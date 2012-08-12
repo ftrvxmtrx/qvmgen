@@ -1,10 +1,15 @@
 -- |Quake VM specific tags.
 module Tag (Tag, getTags) where
 
-import Control.Applicative
 import Control.Arrow
-import Language.C.Comments
-import Language.C.Data.Position
+
+import Language.C.Comments (Comment,
+                            comments,
+                            commentText,
+                            commentPosition)
+import Language.C.Data.Position (Position,
+                                 posRow)
+
 import Text.Parsec
 import Text.Parsec.Expr
 import Text.Parsec.Language
@@ -19,12 +24,12 @@ data Tag = Tag ([TagData], TagInterval)
 type TagInterval = (Position, Position)
 
 -- |Builtin function definition.
-data BuiltinDefinition = BuiltinDefinition { name  :: String,
-                                             index :: Int,
-                                             sig   :: BuiltinSignature,
-                                             exts  :: [QExtensionRef]
-                                           }
-                       deriving Show
+data BuiltinDefinition = BuiltinDefinition
+                         { name  :: String,           -- ^Builtin name.
+                           index :: Int,              -- ^Index.
+                           sig   :: BuiltinSignature, -- ^Signature.
+                           exts  :: [QExtensionRef]   -- ^Extensions list.
+                         } deriving Show
 
 -- |Builtin function signature.
 data BuiltinSignature = BuiltinSignature (Maybe QType, Maybe BuiltinArgs)
@@ -41,8 +46,8 @@ data QBaseType = QBool
                deriving (Eq, Show)
 
 -- |Quake VM types.
-data QType = QValue QBaseType
-           | QField QBaseType
+data QType = QValue QBaseType -- ^Plain value.
+           | QField QBaseType -- ^Field of a specific type.
            deriving Show
 
 -- |Argument.

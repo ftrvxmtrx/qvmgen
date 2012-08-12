@@ -3,8 +3,10 @@ module Builtin (getBuiltins) where
 
 import Control.Applicative (liftA)
 import Control.Arrow
+
 import Data.List (isPrefixOf)
 import Data.Map (Map)
+
 import Language.C
 import Language.C.Analysis
 import Language.C.Data.Ident (identToString)
