@@ -4,10 +4,12 @@ module Main (main) where
 import Control.Applicative (liftA)
 import Control.Arrow
 import Control.Monad (forM_)
+import Data.List (isPrefixOf)
 import Data.Map (Map, toList)
 import Language.C
 import Language.C.Analysis
 import Language.C.Comments (comments)
+import Language.C.Data.Ident (identToString)
 import Language.C.System.GCC (newGCC)
 import System.Console.GetOpt
 import System.Environment (getArgs)
@@ -39,7 +41,8 @@ qvmgenOpts argv =
 -- |Checks if the declaration is a Quake VM builtin.
 isBuiltin :: FilePath -> DeclEvent -> Bool
 isBuiltin input (DeclEvent (FunctionDef f)) =
-  Just input == fileOfNode f
+  Just input == fileOfNode f && prefixed
+  where prefixed = ("vm_b_" `isPrefixOf`) . identToString . declIdent $ f
 isBuiltin _ _ =
   False
 
