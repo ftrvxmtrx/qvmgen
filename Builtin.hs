@@ -1,15 +1,13 @@
 -- |Quake VM builtin functions reader.
 module Builtin (getBuiltins) where
 
-import Control.Applicative (liftA)
-import Control.Arrow
+import Control.Arrow ((>>>))
 
 import Data.List (isPrefixOf)
 import Data.Map (Map)
 
 import Language.C
 import Language.C.Analysis
-import Language.C.Data.Ident (identToString)
 import Language.C.System.GCC (newGCC)
 
 -- |Alias to a map of functions declarations.
@@ -25,15 +23,14 @@ isBuiltin _ _ =
 
 -- |Returns a map of builtins from a source file.
 getBuiltins :: [String] -> FilePath -> IO GObjs
-getBuiltins cflags input =
-  liftA getBuiltins
-  (parseCFile (newGCC "gcc") Nothing cflags input -- parse
-   >>= step "parse" >>=
-   (runTrav_ >>> step "analysis") . analyseAST)   -- analyse
+getBuiltins cflags source = do
+  ast <- parseCFile (newGCC "gcc") Nothing cflags source >>= step "parse"
+  (globals, _warnings) <- (runTrav_ >>> step "analyse") $ analyseAST ast
+  return $ getBuiltins globals
   where
     -- |Raise an error or continue.
     step :: (Show a) => String -> (Either a b) -> IO b
     step label = either (error . (concat ["[", label, "] "] ++) . show) return
     -- |Get builtins map from globals.
-    getBuiltins :: (GlobalDecls, b) -> GObjs
-    getBuiltins = gObjs . filterGlobalDecls (isBuiltin input) . fst
+    getBuiltins :: GlobalDecls -> GObjs
+    getBuiltins = gObjs . filterGlobalDecls (isBuiltin source)

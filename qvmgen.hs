@@ -27,6 +27,7 @@ qvmgenOpts argv =
     (_, _, errs) -> ioError (userError $ concat errs ++ G.usageInfo header options)
       where header = "Usage: qvmgen [OPTION...] -- CFLAGS..."
 
+main :: IO ()
 main = do
   (args, cflags) <- getArgs >>= qvmgenOpts
   zip [x | Input x <- args] [x | Output x <- args] `forM_` \(source, _) -> readFrom cflags source
