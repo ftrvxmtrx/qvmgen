@@ -4,14 +4,14 @@ module Builtin (getBuiltins) where
 import Control.Arrow ((>>>))
 
 import Data.List (isPrefixOf)
-import Data.Map (Map)
+import Data.Map (toList)
 
 import Language.C
 import Language.C.Analysis
 import Language.C.System.GCC (newGCC)
 
 -- |Alias to a map of functions declarations.
-type GObjs = Map Ident IdentDecl
+type GObj = (Ident, IdentDecl)
 
 -- |Checks if the declaration is a Quake VM builtin.
 isBuiltin :: FilePath -> DeclEvent -> Bool
@@ -22,7 +22,7 @@ isBuiltin _ _ =
   False
 
 -- |Returns a map of builtins from a source file.
-getBuiltins :: [String] -> FilePath -> IO GObjs
+getBuiltins :: [String] -> FilePath -> IO [GObj]
 getBuiltins cflags source = do
   ast <- parseCFile (newGCC "gcc") Nothing cflags source >>= step "parse"
   (globals, _warnings) <- (runTrav_ >>> step "analyse") $ analyseAST ast
@@ -32,5 +32,5 @@ getBuiltins cflags source = do
     step :: (Show a) => String -> (Either a b) -> IO b
     step label = either (error . (concat ["[", label, "] "] ++) . show) return
     -- |Get builtins map from globals.
-    getBuiltins :: GlobalDecls -> GObjs
-    getBuiltins = gObjs . filterGlobalDecls (isBuiltin source)
+    getBuiltins :: GlobalDecls -> [GObj]
+    getBuiltins = toList . gObjs . filterGlobalDecls (isBuiltin source)
