@@ -1,5 +1,5 @@
 -- |Quake VM tags parser.
-module TagParse (Tag, TagInterval, TagList, getTags) where
+module TagParse (Tag(..), TagInterval, TagList, getTags) where
 
 import Control.Arrow
 import Control.Monad
@@ -99,7 +99,7 @@ getTags source = do
 getInterval :: Comment -> TagInterval
 getInterval =
   commentPosition &&& length . filter ('\n' ==) . commentText >>>
-  \(p, n) -> (p, p { posRow = posRow p + n})
+  \(p, n) -> (p, p { posRow = posRow p + n + 1})
 
 -- |Comment parser. It returns either a tag or a comment not attached to any tag.
 tagParser =
