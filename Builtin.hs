@@ -11,7 +11,7 @@ import Language.C.Analysis
 import Language.C.System.GCC (newGCC)
 
 -- |Alias to a map of functions declarations.
-type GObj = (Ident, IdentDecl)
+type GObj = (Ident, FunDef)
 
 -- |Checks if the declaration is a Quake VM builtin.
 isBuiltin :: FilePath -> DeclEvent -> Bool
@@ -33,4 +33,7 @@ getBuiltins cflags source = do
     step label = either (error . (concat ["[", label, "] "] ++) . show) return
     -- |Get builtins map from globals.
     getBuiltins :: GlobalDecls -> [GObj]
-    getBuiltins = toList . gObjs . filterGlobalDecls (isBuiltin source)
+    getBuiltins = toList . funDefs . gObjs . filterGlobalDecls (isBuiltin source)
+    funDefs objs =
+      let (_, (_, _, funDefMap)) = splitIdentDecls False objs in
+      funDefMap
