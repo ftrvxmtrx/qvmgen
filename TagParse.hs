@@ -1,5 +1,7 @@
 -- |Quake VM tags parser.
-module TagParse (Tag(..), TagInterval, TagList, getTags) where
+module TagParse (Tag(..),
+                 TagData(..),
+                 getTags) where
 
 import Control.Arrow
 import Control.Monad
@@ -18,31 +20,37 @@ import Text.Parsec
 import Text.Parsec.Language
 import Text.Parsec.Token
 
--- |Tag.
-data Tag = Builtin                -- ^Builtin
-           { name     :: String   -- ^Builtin name.
-           , hasTest  :: Bool     -- ^True if has test.
-           , vmFilter :: VMFilter -- ^Non-empty if VMs where specified explicitely.
-           , index    :: Integer  -- ^Index.
-           , sig      :: Sig      -- ^Signature.
-           }
-         | Comment String
-         | DefConst               -- ^Definition of a constant.
-           { name  :: String      -- ^Name of the constant.
-           , value :: String      -- ^Value of the constant.
-           }
-         | DefField               -- ^Definition of a field.
-           { name  :: String      -- ^Name of the field.
-           , type' :: BaseType    -- ^Type of the field.`
-           }
-         | DefConCmd              -- ^Definition of a console command.
-           { name :: String       -- ^Name of the command.
-           }
-         | Extension String VMFilter         -- ^Extension.
-         | ExtensionAddition String VMFilter -- ^Extension which adds some functionality to an existing stuff.
-         | Fixme String                      -- ^FIXME tag.
-         | Separator                         -- ^Logical separation between tags contained in one comment.
-         deriving Show
+-- |Tag data.
+data TagData =
+  -- |Builtin
+  Builtin
+  { name     :: String   -- ^Builtin name.
+  , hasTest  :: Bool     -- ^True if has test.
+  , vmFilter :: VMFilter -- ^Non-empty if VMs where specified explicitely.
+  , index    :: Integer  -- ^Index.
+  , sig      :: Sig      -- ^Signature.
+  }
+  | Comment String
+    -- |Definition of a constant.
+  | DefConst
+    { name  :: String      -- ^Name of the constant.
+    , value :: String      -- ^Value of the constant.
+    }
+    -- |Definition of a field.
+  | DefField
+    { name  :: String      -- ^Name of the field.
+    , type' :: BaseType    -- ^Type of the field.`
+    }
+    -- |Definition of a console command.
+  | DefConCmd
+    { name :: String       -- ^Name of the command.
+    }
+    -- |Extension.
+  | Extension String VMFilter
+  | ExtensionAddition String VMFilter -- ^Extension which adds some functionality to an existing stuff.
+  | Fixme String                      -- ^FIXME tag.
+  | Separator                         -- ^Logical separation between tags contained in one comment.
+  deriving Show
 
 -- Function signature.
 data Sig = Arg Type Sig                 -- ^Normal argument.
@@ -76,27 +84,31 @@ data BaseType = QBool
 -- |VM filter. Non-empty if VMs are specified explicitely.
 type VMFilter = [String]
 
--- |Tag interval (start and end positions).
-type TagInterval = (Position, Position)
-
--- |List of tags from one comment.
-type TagList = (TagInterval, [Tag])
+-- |Tag data from one comment.
+data Tag = Tag{ startPos :: Position
+              , endPos   :: Position
+              , tagData  :: [TagData]
+              }
 
 -- |Get all tags from source file.
-getTags :: FilePath -> IO [Either ParseError TagList]
+getTags :: FilePath -> IO [Either ParseError Tag]
 getTags source = do
   liftM (map m) $ comments source
     where
-      m :: Comment -> Either ParseError TagList
-      m c =
-        addIterval <<< parse (updatePos >> tagParser) source . commentTextWithoutMarks $ c
+      m :: Comment -> Either ParseError Tag
+      m c = do
+        tagData <- parse (updatePos >> tagParser) source . commentTextWithoutMarks $ c
+        return Tag{ startPos = startPos
+                  , endPos   = endPos
+                  , tagData  = tagData
+                  }
         where
-          addIterval = right $ \x -> (getInterval c, x)
           row        = posRow . commentPosition $ c
           updatePos  = getPosition >>= \p -> setPosition $ setSourceLine p row
+          (startPos, endPos) = getInterval c
 
 -- |Get interval of a comment.
-getInterval :: Comment -> TagInterval
+getInterval :: Comment -> (Position, Position)
 getInterval =
   commentPosition &&& length . filter ('\n' ==) . commentText >>>
   \(p, n) -> (p, p { posRow = posRow p + n + 1})

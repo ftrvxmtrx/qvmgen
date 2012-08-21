@@ -14,11 +14,11 @@ readFrom :: [String] -> FilePath -> IO ()
 readFrom cflags source = do
   tags <- getTags source
   builtins <- getBuiltins cflags source
-  mapM_ print $ sort [ (name, snd t) | (name, b) <- builtins
-                                     , Right t <- tags
-                                     , rowOfBuiltin b == rowOfTagEnd t
-                                     ]
+  mapM_ print $ sort [ (name, tagData t) | (name, b) <- builtins
+                                         , Right t <- tags
+                                         , rowOfBuiltin b == rowOfTagEnd t
+                                         ]
   where
     rowOfBuiltin = posRow . posOf
-    rowOfTagEnd = posRow . snd . fst
+    rowOfTagEnd = posRow . endPos
     sort = sortBy $ \(_, Builtin{index = x}:_) (_, Builtin{index = y}:_) -> compare x y
