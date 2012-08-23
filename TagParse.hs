@@ -60,11 +60,9 @@ data TagData =
   | ExtensionAddition String VMFilter
   -- |FIXME tag.
   | Fixme String
-  -- |Logical separation between tags contained in one comment.
-  | Separator
   -- |Parse error.
-  | TagError{ relatedTag :: TagData
-            , errorMsg   :: String
+  | TagError{ relatedData :: TagData -- ^Data related to the error.
+            , errorMsg    :: String  -- ^Error message.
             }
   deriving Show
 
@@ -130,54 +128,37 @@ getInterval =
 
 -- |Comment parser. It returns either a tag or a comment not attached to any tag.
 tagParser bDef =
-  try (do { m_whiteSpace
-          ; tags <- many1 (tag bDef)
-          ; eof
-          ; return tags
-          })
-  <|>
-  do { m_whiteSpace
-     ; c <- anyChar `manyTill` eof
-     ; return [Comment c]
+  do { tags <- (do { optional m_whiteSpace
+                   ; tag bDef
+                   }) `manyTill` eof
+     ; return tags
      }
 
 -- |Tag parser.
 tag bDef =
-  separator
-  <|>
-  try (do { m_whiteSpace
-          ; builtin bDef <|> definition <|> extension
-          })
-  <|>
   fixme
-  <|>
-  comment
+  <|> builtin bDef
+  <|> definition
+  <|> extension
+  <|> comment
   <?> "tag"
-
--- |Separator makes subtags logically separated.
-separator =
-  do { newline
-     ; return Separator
-     }
 
 -- |Comment. Possibly attached to a tag.
 comment =
-  return Comment `ap` tillNewLine
+  do { c <- anyChar `manyTill` (try $ do { newline; newline } <|> do { eof; return '\n' })
+     ; return $ Comment c
+     }
 
 -- |"FIXME" tag.
 fixme =
-  return Fixme `ap` (m_reserved "FIXME" >> tillNewLine)
-
--- |Helper to read everything to newline.
-tillNewLine =
-  anyChar `manyTill` newline
+  return Fixme `ap` (m_reserved "FIXME" >> many1 (noneOf "\n"))
 
 -- |Constant, console command or a field.
 definition =
   do { m_reserved "const"
      ; name <- m_identifier
      ; m_reservedOp "="
-     ; value <- tillNewLine
+     ; value <- anyChar `manyTill` newline
      ; return DefConst{ name  = name
                       , value = value
                       }
@@ -225,8 +206,7 @@ vmFilterExpr =
 
 -- |Builtin function parser.
 builtin bDef =
-  do { hasTest  <- liftM isJust $ optionMaybe $ char 'T'
-     ; index    <- between (m_reservedOp "#") (m_reservedOp "=") m_integer
+  do { (hasTest, index) <- try testAndIndex
      ; name     <- m_identifier
      ; vmFilter <- vmFilterExpr
      ; m_reservedOp "::"
@@ -240,11 +220,16 @@ builtin bDef =
                         } in
        case bDef of
          (Just (A.FunDef _ _ _)) -> return t
-         _                       -> return TagError{ relatedTag = t
-                                                   , errorMsg   = "no builtin definition after tag"
+         _                       -> return TagError{ relatedData = t
+                                                   , errorMsg    = "no builtin definition after tag"
                                                    }
      }
   where
+    testAndIndex = do { hasTest <- liftM isJust $ optionMaybe $ char 'T'
+                      ; index   <- between (m_reservedOp "#") (m_reservedOp "=") m_integer
+                      ; return (hasTest, index)
+                      }
+
     signature = (return Return `ap` (m_reserved "()" >> m_reservedOp "->" >> sigRet))
                 <|>
                 (return     id `ap` sigWithArgs)
