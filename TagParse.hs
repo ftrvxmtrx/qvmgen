@@ -3,11 +3,15 @@ module TagParse (Tag(..),
                  TagData(..),
                  getTags) where
 
+import Builtin
+
 import Control.Arrow
 import Control.Monad
 
 import Data.Maybe
+import qualified Data.Map as M
 
+import qualified Language.C.Analysis as A
 import Language.C.Comments (Comment,
                             comments,
                             commentText,
@@ -20,48 +24,60 @@ import Text.Parsec
 import Text.Parsec.Language
 import Text.Parsec.Token
 
+-- |Tag data from one comment.
+data Tag = Tag{ startPos :: Position
+              , endPos   :: Position
+              , tagData  :: [TagData]
+              }
+           deriving Show
+
 -- |Tag data.
 data TagData =
   -- |Builtin
-  Builtin
-  { name     :: String   -- ^Builtin name.
-  , hasTest  :: Bool     -- ^True if has test.
-  , vmFilter :: VMFilter -- ^Non-empty if VMs where specified explicitely.
-  , index    :: Integer  -- ^Index.
-  , sig      :: Sig      -- ^Signature.
-  }
+  Builtin{ name     :: String   -- ^Builtin name.
+         , cFunc    :: String   -- ^C function name.
+         , hasTest  :: Bool     -- ^True if has test.
+         , vmFilter :: VMFilter -- ^Non-empty if VMs where specified explicitely.
+         , index    :: Integer  -- ^Index.
+         , sig      :: Sig      -- ^Signature.
+         }
+  -- | Comment.
   | Comment String
-    -- |Definition of a constant.
-  | DefConst
-    { name  :: String      -- ^Name of the constant.
-    , value :: String      -- ^Value of the constant.
-    }
-    -- |Definition of a field.
-  | DefField
-    { name  :: String      -- ^Name of the field.
-    , type' :: BaseType    -- ^Type of the field.`
-    }
-    -- |Definition of a console command.
-  | DefConCmd
-    { name :: String       -- ^Name of the command.
-    }
-    -- |Extension.
+  -- |Definition of a constant.
+  | DefConst{ name  :: String -- ^Name of the constant.
+            , value :: String -- ^Value of the constant.
+            }
+  -- |Definition of a field.
+  | DefField{ name  :: String   -- ^Name of the field.
+            , type' :: BaseType -- ^Type of the field.`
+            }
+  -- |Definition of a console command.
+  | DefConCmd { name :: String -- ^Name of the command.
+              }
+  -- |Extension.
   | Extension String VMFilter
-  | ExtensionAddition String VMFilter -- ^Extension which adds some functionality to an existing stuff.
-  | Fixme String                      -- ^FIXME tag.
-  | Separator                         -- ^Logical separation between tags contained in one comment.
+  -- |Extension which adds some functionality to an existing stuff.
+  | ExtensionAddition String VMFilter
+  -- |FIXME tag.
+  | Fixme String
+  -- |Logical separation between tags contained in one comment.
+  | Separator
+  -- |Parse error.
+  | TagError{ relatedTag :: TagData
+            , errorMsg   :: String
+            }
   deriving Show
 
 -- Function signature.
-data Sig = Arg Type Sig                 -- ^Normal argument.
+data Sig = Arg ArgName Type Sig         -- ^Normal argument.
          | OptArgs OptArgs (Maybe Type) -- ^Optional argument.
          | Return (Maybe Type)          -- ^End of arguments.
          deriving Show
 
 -- |Optional arguments.
-data OptArgs = OptArg String Type (Maybe OptArgs) -- ^Optional argument.
-             | VarArg0 Type                       -- ^Zero to many optional arguments.
-             | VarArg1 Type                       -- ^One to many optional arguments.
+data OptArgs = OptArg ArgName Type (Maybe OptArgs) -- ^Optional argument.
+             | VarArg0 ArgName ArgStartIndex Type  -- ^Zero to many optional arguments.
+             | VarArg1 ArgName ArgStartIndex Type  -- ^One to many optional arguments.
              deriving Show
 
 -- |Quake types.
@@ -81,23 +97,22 @@ data BaseType = QBool
               | QFunc
               deriving (Eq, Show)
 
+type ArgName = String
+type ArgStartIndex = Integer
+
 -- |VM filter. Non-empty if VMs are specified explicitely.
 type VMFilter = [String]
 
--- |Tag data from one comment.
-data Tag = Tag{ startPos :: Position
-              , endPos   :: Position
-              , tagData  :: [TagData]
-              }
-
 -- |Get all tags from source file.
-getTags :: FilePath -> IO [Either ParseError Tag]
-getTags source = do
-  liftM (map m) $ comments source
+getTags :: [String] -> FilePath -> IO [Either ParseError Tag]
+getTags cflags source = do
+  builtinDefs <- getBuiltins cflags source
+  liftM (map $ m builtinDefs) $ comments source
     where
-      m :: Comment -> Either ParseError Tag
-      m c = do
-        tagData <- parse (updatePos >> tagParser) source . commentTextWithoutMarks $ c
+      m :: BuiltinDefs -> Comment -> Either ParseError Tag
+      m builtinDefs c = do
+        bDef <- return $ M.lookup (posRow endPos) builtinDefs
+        tagData <- parse (updatePos >> tagParser bDef) source . commentTextWithoutMarks $ c
         return Tag{ startPos = startPos
                   , endPos   = endPos
                   , tagData  = tagData
@@ -114,9 +129,9 @@ getInterval =
   \(p, n) -> (p, p { posRow = posRow p + n + 1})
 
 -- |Comment parser. It returns either a tag or a comment not attached to any tag.
-tagParser =
+tagParser bDef =
   try (do { m_whiteSpace
-          ; tags <- many1 tag
+          ; tags <- many1 (tag bDef)
           ; eof
           ; return tags
           })
@@ -127,11 +142,11 @@ tagParser =
      }
 
 -- |Tag parser.
-tag =
+tag bDef =
   separator
   <|>
   try (do { m_whiteSpace
-          ; builtin <|> definition <|> extension
+          ; builtin bDef <|> definition <|> extension
           })
   <|>
   fixme
@@ -209,19 +224,25 @@ vmFilterExpr =
   option [] (m_parens $ m_commaSep1 m_identifier)
 
 -- |Builtin function parser.
-builtin =
+builtin bDef =
   do { hasTest  <- liftM isJust $ optionMaybe $ char 'T'
      ; index    <- between (m_reservedOp "#") (m_reservedOp "=") m_integer
      ; name     <- m_identifier
      ; vmFilter <- vmFilterExpr
      ; m_reservedOp "::"
      ; sig      <- signature
-     ; return Builtin{ index    = index
-                     , name     = name
-                     , sig      = sig
-                     , hasTest  = hasTest
-                     , vmFilter = vmFilter
-                     }
+     ; let t = Builtin{ index    = index
+                        , cFunc    = ""
+                        , name     = name
+                        , sig      = sig
+                        , hasTest  = hasTest
+                        , vmFilter = vmFilter
+                        } in
+       case bDef of
+         (Just (A.FunDef _ _ _)) -> return t
+         _                       -> return TagError{ relatedTag = t
+                                                   , errorMsg   = "no builtin definition after tag"
+                                                   }
      }
   where
     signature = (return Return `ap` (m_reserved "()" >> m_reservedOp "->" >> sigRet))
@@ -232,7 +253,7 @@ builtin =
     sigWithArgs = try (do { type' <- anyType
                           ; m_reservedOp "->"
                           ; tail  <- sigWithArgs
-                          ; return $ Arg type' tail
+                          ; return $ Arg "" type' tail
                           })
                   <|>
                   try (do { args <- optArgs
@@ -260,12 +281,12 @@ builtin =
     varArg0 = do { m_reservedOp "..."
                  ; type' <- option AnyValue anyType
                  ; m_reservedOp "->"
-                 ; return $ VarArg0 type'
+                 ; return $ VarArg0 "" 0 type'
                  }
     varArg1 = do { type' <- anyType
                  ; m_reservedOp "..."
                  ; m_reservedOp "->"
-                 ; return $ VarArg1 type'
+                 ; return $ VarArg1 "" 1 type'
                  }
 
     optArgNameType = do { name <- m_identifier
