@@ -53,11 +53,11 @@ data TagData =
                , type' :: Type   -- ^Type of the declaration.
                }
   -- |Console command.
-  | ConsoleCommand{ name :: String -- ^Name of the command.
-                  }
+  | ConsoleCommand String
   -- |Console variable.
-  | ConsoleVariable{ name :: String -- ^Name of the variable.
-                   }
+  | ConsoleVariable String
+  -- |Console alias.
+  | ConsoleAlias String
   -- |Extension.
   | Extension String VMFilter
   -- |Extension which adds some functionality to an existing stuff.
@@ -189,17 +189,12 @@ constValue =
          , return ConstString  `ap` m_stringLiteral
          ]
 
--- |Console command or variable.
+-- |Console object.
 console =
-  do { m_reserved "concmd"
-     ; name <- m_stringLiteral
-     ; return ConsoleCommand{ name = name }
-     }
-  <|>
-  do { m_reserved "convar"
-     ; name <- m_stringLiteral
-     ; return ConsoleVariable{ name = name }
-     }
+  choice [ return ConsoleAlias    `ap` (m_reserved "conalias" >> m_stringLiteral)
+         , return ConsoleCommand  `ap` (m_reserved "convar"   >> m_stringLiteral)
+         , return ConsoleVariable `ap` (m_reserved "concmd"   >> m_stringLiteral)
+         ]
 
 -- |Declaration.
 declaration =
@@ -361,6 +356,7 @@ TokenParser{ identifier    = m_identifier
               , reservedNames   = [ "()"
                                   , "any"
                                   , "bool"
+                                  , "conalias"
                                   , "concmd"
                                   , "const"
                                   , "convar"
