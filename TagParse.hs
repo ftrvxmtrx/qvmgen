@@ -140,17 +140,23 @@ tagParser bDef =
 
 -- |Tag parser.
 tag bDef =
-  fixme
-  <|> builtin bDef
-  <|> constant
-  <|> console
-  <|> declaration
-  <|> extension
-  <|> comment
+  choice [ fixme
+         , builtin bDef
+         , console
+         , constant
+         , declaration
+         , extension
+         , comment
+         ]
   <?> "tag"
 
 -- |Comment. Possibly attached to a tag.
 comment =
+  do { m_reservedOp "//"
+     ; c <- anyChar `manyTill` newline
+     ; return $ Comment c
+     }
+  <|>
   do { c <- anyChar `manyTill` (try $ do { newline; newline } <|> do { eof; return '\n' })
      ; return $ Comment c
      }
@@ -339,7 +345,7 @@ TokenParser{ identifier    = m_identifier
               , commentEnd      = "-}"
               , identStart      = letter <|> char '_'
               , identLetter     = alphaNum <|> char '_'
-              , reservedOpNames = ["->", "::", "#", "=", "...", "@", "@+"]
+              , reservedOpNames = ["->", "::", "#", "=", "...", "@", "@+", "//"]
               , reservedNames   = [ "()"
                                   , "any"
                                   , "bool"
