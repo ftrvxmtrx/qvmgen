@@ -44,16 +44,19 @@ data TagData =
   -- | Comment.
   | Comment String
   -- |Definition of a constant.
-  | DefConst{ name  :: String -- ^Name of the constant.
+  | Constant{ name  :: String -- ^Name of the constant.
             , value :: String -- ^Value of the constant.
             }
-  -- |Definition of a field.
-  | DefField{ name  :: String   -- ^Name of the field.
-            , type' :: BaseType -- ^Type of the field.`
-            }
-  -- |Definition of a console command.
-  | DefConCmd { name :: String -- ^Name of the command.
-              }
+  -- |Declaration.
+  | Declaration{ name  :: String -- ^Name of the declaration.
+               , type' :: Type   -- ^Type of the declaration.
+               }
+  -- |Console command.
+  | ConsoleCommand{ name :: String -- ^Name of the command.
+                  }
+  -- |Console variable.
+  | ConsoleVariable{ name :: String -- ^Name of the variable.
+                   }
   -- |Extension.
   | Extension String VMFilter
   -- |Extension which adds some functionality to an existing stuff.
@@ -92,8 +95,8 @@ data BaseType = QBool
               | QFloat
               | QVector
               | QEntity
-              | QFunc
-              deriving (Eq, Show)
+              | QFunc Sig
+              deriving Show
 
 type ArgName = String
 type ArgStartIndex = Integer
@@ -138,7 +141,9 @@ tagParser bDef =
 tag bDef =
   fixme
   <|> builtin bDef
-  <|> definition
+  <|> constant
+  <|> console
+  <|> declaration
   <|> extension
   <|> comment
   <?> "tag"
@@ -154,27 +159,39 @@ fixme =
   return Fixme `ap` (m_reserved "FIXME" >> many1 (noneOf "\n"))
 
 -- |Constant, console command or a field.
-definition =
+constant =
   do { m_reserved "const"
      ; name <- m_identifier
      ; m_reservedOp "="
      ; value <- anyChar `manyTill` newline
-     ; return DefConst{ name  = name
+     ; return Constant{ name  = name
                       , value = value
                       }
      }
-  <|>
+
+console =
   do { m_reserved "concmd"
      ; name <- m_stringLiteral
-     ; return DefConCmd{ name = name }
+     ; return ConsoleCommand{ name = name }
      }
   <|>
-  do { char '.'
-     ; type' <- baseType
-     ; name <- m_identifier
-     ; return DefField{ name  = name
-                      , type' = type'
-                      }
+  do { m_reserved "convar"
+     ; name <- m_stringLiteral
+     ; return ConsoleVariable{ name = name }
+     }
+
+declaration =
+  do { name <- try namedDeclaration
+     ; type' <- anyType
+     ; return Declaration{ name  = name
+                         , type' = type'
+                         }
+     }
+
+namedDeclaration =
+  do { name <- m_identifier
+     ; m_reservedOp "::"
+     ; return name
      }
 
 -- |Extension
@@ -193,10 +210,13 @@ baseType =
     bt "bool"   QBool   <|>
     bt "entity" QEntity <|>
     bt "float"  QFloat  <|>
-    bt "func"   QFunc   <|>
     bt "int"    QInt    <|>
     bt "string" QString <|>
-    bt "vector" QVector <?> "base type"
+    bt "vector" QVector <|>
+    do { sig <- m_parens signature
+       ; return $ QFunc sig
+       }
+    <?> "base type"
   where
     bt s t = m_reserved s >> return t
 
@@ -207,17 +227,17 @@ vmFilterExpr =
 -- |Builtin function parser.
 builtin bDef =
   do { (hasTest, index) <- try testAndIndex
-     ; name     <- m_identifier
+     ; name <- m_identifier
      ; vmFilter <- vmFilterExpr
      ; m_reservedOp "::"
-     ; sig      <- signature
+     ; sig <- signature
      ; let t = Builtin{ index    = index
-                        , cFunc    = ""
-                        , name     = name
-                        , sig      = sig
-                        , hasTest  = hasTest
-                        , vmFilter = vmFilter
-                        } in
+                      , cFunc    = ""
+                      , name     = name
+                      , sig      = sig
+                      , hasTest  = hasTest
+                      , vmFilter = vmFilter
+                      } in
        case bDef of
          (Just (A.FunDef _ _ _)) -> return t
          _                       -> return TagError{ relatedData = t
@@ -230,12 +250,21 @@ builtin bDef =
                       ; return (hasTest, index)
                       }
 
-    signature = (return Return `ap` (m_reserved "()" >> m_reservedOp "->" >> sigRet))
-                <|>
-                (return     id `ap` sigWithArgs)
-                <?> "function signature"
+-- |Function signature parser.
+signature =
+  (return Return `ap` (m_reserved "()" >> m_reservedOp "->" >> sigRet))
+  <|>
+  (return     id `ap` sigWithArgs)
+  <?> "function signature"
 
-    sigWithArgs = try (do { type' <- anyType
+  where
+    sigWithArgs = try (do { (name, type') <- m_parens argTypeWithName
+                          ; m_reservedOp "->"
+                          ; tail          <- sigWithArgs
+                          ; return $ Arg name type' tail
+                          })
+                  <|>
+                  try (do { type' <- anyType
                           ; m_reservedOp "->"
                           ; tail  <- sigWithArgs
                           ; return $ Arg "" type' tail
@@ -258,7 +287,7 @@ builtin bDef =
 
     -- OptArgs
     optArgs = optArg <|> varArg0 <|> varArg1 <?> "optional arguments"
-    optArg = do { (name, type') <- m_braces optArgNameType
+    optArg = do { (name, type') <- m_braces argTypeWithName
                 ; m_reservedOp "->"
                 ; tail <- optionMaybe optArg
                 ; return $ OptArg name type' tail
@@ -274,19 +303,23 @@ builtin bDef =
                  ; return $ VarArg1 "" 1 type'
                  }
 
-    optArgNameType = do { name <- m_identifier
-                        ; m_reservedOp "::"
-                        ; type' <- anyType
-                        ; return (name, type')
-                        }
+    argTypeWithName = do { name <- namedDeclaration
+                         ; type' <- anyType
+                         ; return (name, type')
+                         }
 
-    -- Type
+-- |Type.
+anyType =
+  try typeField    <|>
+  try typeAnyField <|>
+  try typeValue    <|>
+  typeAnyValue     <?> "type"
+  where
     typeValue    = return           Value  `ap` baseType
     typeAnyValue = return (const AnyValue) `ap` m_reserved "any"
     typeField    = return           Field  `ap` (char '.' >> baseType)
     typeAnyField = return (const AnyField) `ap` (char '.' >> m_reserved "any")
 
-    anyType = try typeField <|> try typeAnyField <|> try typeValue <|> typeAnyValue <?> "type"
 
 -- |Main token parser for Parsec.
 TokenParser{ identifier    = m_identifier
@@ -311,6 +344,7 @@ TokenParser{ identifier    = m_identifier
                                   , "bool"
                                   , "concmd"
                                   , "const"
+                                  , "convar"
                                   , "entity"
                                   , "FIXME"
                                   , "float"
