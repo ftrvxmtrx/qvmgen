@@ -45,8 +45,8 @@ data TagData =
   -- | Comment.
   | Comment String
   -- |Definition of a constant.
-  | Constant{ name  :: String -- ^Name of the constant.
-            , value :: String -- ^Value of the constant.
+  | Constant{ name  :: String     -- ^Name of the constant.
+            , value :: ConstValue -- ^Value of the constant.
             }
   -- |Declaration.
   | Declaration{ name  :: String -- ^Name of the declaration.
@@ -70,7 +70,13 @@ data TagData =
             }
   deriving Show
 
--- Function signature.
+-- |Constant value.
+data ConstValue = ConstString String
+                | ConstInteger Integer
+                | ConstFloat Double
+                deriving Show
+
+-- |Function signature.
 data Sig = Arg ArgName Type Sig         -- ^Normal argument.
          | OptArgs OptArgs (Maybe Type) -- ^Optional argument.
          | Return (Maybe Type)          -- ^End of arguments.
@@ -165,17 +171,25 @@ comment =
 fixme =
   return Fixme `ap` (m_reserved "FIXME" >> many1 (noneOf "\n"))
 
--- |Constant, console command or a field.
+-- |Constant.
 constant =
   do { m_reserved "const"
      ; name <- m_identifier
      ; m_reservedOp "="
-     ; value <- anyChar `manyTill` newline
+     ; value <- constValue
      ; return Constant{ name  = name
                       , value = value
                       }
      }
 
+-- |Constant value.
+constValue =
+  choice [ return ConstFloat   `ap` try m_float
+         , return ConstInteger `ap` m_integer
+         , return ConstString  `ap` m_stringLiteral
+         ]
+
+-- |Console command or variable.
 console =
   do { m_reserved "concmd"
      ; name <- m_stringLiteral
@@ -187,18 +201,20 @@ console =
      ; return ConsoleVariable{ name = name }
      }
 
+-- |Declaration.
 declaration =
-  do { name <- try namedDeclaration
-     ; type' <- anyType
+  do { (name, type') <- try namedTypedDeclaration
      ; return Declaration{ name  = name
                          , type' = type'
                          }
      }
 
-namedDeclaration =
+-- |Name and type (name :: type).
+namedTypedDeclaration =
   do { name <- m_identifier
      ; m_reservedOp "::"
-     ; return name
+     ; type' <- anyType
+     ; return (name, type')
      }
 
 -- |Extension
@@ -214,16 +230,15 @@ extension =
 
 -- |Base types parser.
 baseType =
-    bt "bool"   QBool   <|>
-    bt "entity" QEntity <|>
-    bt "float"  QFloat  <|>
-    bt "int"    QInt    <|>
-    bt "string" QString <|>
-    bt "vector" QVector <|>
-    do { sig <- m_parens signature
-       ; return $ QFunc sig
-       }
-    <?> "base type"
+  choice [ bt "bool"   QBool
+         , bt "entity" QEntity
+         , bt "float"  QFloat
+         , bt "int"    QInt
+         , bt "string" QString
+         , bt "vector" QVector
+         , return QFunc `ap` m_parens signature
+         ]
+  <?> "base type"
   where
     bt s t = m_reserved s >> return t
 
@@ -265,7 +280,7 @@ signature =
   <?> "function signature"
 
   where
-    sigWithArgs = try (do { (name, type') <- m_parens argTypeWithName
+    sigWithArgs = try (do { (name, type') <- m_parens namedTypedDeclaration
                           ; m_reservedOp "->"
                           ; tail          <- sigWithArgs
                           ; return $ Arg name type' tail
@@ -294,7 +309,7 @@ signature =
 
     -- OptArgs
     optArgs = optArg <|> varArg0 <|> varArg1 <?> "optional arguments"
-    optArg = do { (name, type') <- m_braces argTypeWithName
+    optArg = do { (name, type') <- m_braces namedTypedDeclaration
                 ; m_reservedOp "->"
                 ; tail <- optionMaybe optArg
                 ; return $ OptArg name type' tail
@@ -310,29 +325,26 @@ signature =
                  ; return $ VarArg1 "" 1 type'
                  }
 
-    argTypeWithName = do { name <- namedDeclaration
-                         ; type' <- anyType
-                         ; return (name, type')
-                         }
-
 -- |Type.
 anyType =
-  try typeField    <|>
-  try typeAnyField <|>
-  try typeValue    <|>
-  typeAnyValue     <?> "type"
+  choice [ try typeField
+         , try typeAnyField
+         , try typeValue
+         , typeAnyValue
+         ]
+  <?> "type"
   where
     typeValue    = return           Value  `ap` baseType
     typeAnyValue = return (const AnyValue) `ap` m_reserved "any"
     typeField    = return           Field  `ap` (char '.' >> baseType)
     typeAnyField = return (const AnyField) `ap` (char '.' >> m_reserved "any")
 
-
 -- |Main token parser for Parsec.
 TokenParser{ identifier    = m_identifier
            , reservedOp    = m_reservedOp
            , reserved      = m_reserved
            , integer       = m_integer
+           , float         = m_float
            , whiteSpace    = m_whiteSpace
            , braces        = m_braces
            , parens        = m_parens
