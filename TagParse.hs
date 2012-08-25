@@ -17,6 +17,7 @@ import Language.C.Comments (Comment,
                             commentText,
                             commentTextWithoutMarks,
                             commentPosition)
+import Language.C.Data.Ident (identToString)
 import Language.C.Data.Position (Position,
                                  posRow)
 
@@ -232,17 +233,17 @@ builtin bDef =
      ; m_reservedOp "::"
      ; sig <- signature
      ; let t = Builtin{ index    = index
-                      , cFunc    = ""
+                      , cFunc    = "<invalid>"
                       , name     = name
                       , sig      = sig
                       , hasTest  = hasTest
                       , vmFilter = vmFilter
                       } in
        case bDef of
-         (Just (A.FunDef _ _ _)) -> return t
-         _                       -> return TagError{ relatedData = t
-                                                   , errorMsg    = "no builtin definition after tag"
-                                                   }
+         (Just f@(A.FunDef _ _ _)) -> return t{ cFunc = identToString . A.declIdent $ f }
+         _                         -> return TagError{ relatedData = t
+                                                     , errorMsg    = "no builtin definition after tag"
+                                                     }
      }
   where
     testAndIndex = do { hasTest <- liftM isJust $ optionMaybe $ char 'T'
