@@ -192,8 +192,8 @@ constValue =
 -- |Console object.
 console =
   choice [ return ConsoleAlias    `ap` (m_reserved "conalias" >> m_stringLiteral)
-         , return ConsoleCommand  `ap` (m_reserved "convar"   >> m_stringLiteral)
-         , return ConsoleVariable `ap` (m_reserved "concmd"   >> m_stringLiteral)
+         , return ConsoleVariable `ap` (m_reserved "convar"   >> m_stringLiteral)
+         , return ConsoleCommand  `ap` (m_reserved "concmd"   >> m_stringLiteral)
          ]
 
 -- |Declaration.
