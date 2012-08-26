@@ -45,23 +45,35 @@ data TagData =
   -- | Comment.
   | Comment String
   -- |Definition of a constant.
-  | Constant{ name  :: String     -- ^Name of the constant.
-            , value :: ConstValue -- ^Value of the constant.
+  | Constant{ name     :: String     -- ^Name of the constant.
+            , value    :: ConstValue -- ^Value of the constant.
+            , vmFilter :: VMFilter
             }
   -- |Declaration.
-  | Declaration{ name  :: String -- ^Name of the declaration.
-               , type' :: Type   -- ^Type of the declaration.
+  | Declaration{ name     :: String   -- ^Name of the declaration.
+               , vmFilter :: VMFilter -- ^Non-empty if should exist only in specific VMs.
+               , type'    :: Type     -- ^Type of the declaration.
                }
-  -- |Console command.
-  | ConsoleCommand String
-  -- |Console variable.
-  | ConsoleVariable String
   -- |Console alias.
-  | ConsoleAlias String
+  | ConsoleAlias{ name     :: String
+                , vmFilter :: VMFilter
+                }
+  -- |Console command.
+  | ConsoleCommand{ name     :: String
+                  , vmFilter :: VMFilter
+                  }
+  -- |Console variable.
+  | ConsoleVariable{ name     :: String
+                   , vmFilter :: VMFilter
+                   }
   -- |Extension.
-  | Extension String VMFilter
+  | Extension{ name     :: String
+             , vmFilter :: VMFilter
+             }
   -- |Extension which adds some functionality to an existing stuff.
-  | ExtensionAddition String VMFilter
+  | ExtensionAddition{ name     :: String
+                     , vmFilter :: VMFilter
+                     }
   -- |FIXME tag.
   | Fixme String
   deriving Show
@@ -107,6 +119,15 @@ type ArgStartIndex = Integer
 -- |VM filter. Non-empty if VMs are specified explicitely.
 type VMFilter = [String]
 
+-- |Parser state.
+data TagState = TagState{ lastVMFilter :: VMFilter
+                        }
+
+-- |Initial parser state.
+initialState =
+  TagState{ lastVMFilter = []
+          }
+
 -- |Get all tags from source file.
 getTags :: [String] -> FilePath -> IO [Either ParseError Tag]
 getTags cflags source = do
@@ -116,7 +137,7 @@ getTags cflags source = do
       m :: BuiltinDefs -> Comment -> Either ParseError Tag
       m builtinDefs c = do
         bDef <- return $ M.lookup (posRow endPos) builtinDefs
-        tagData <- parse (updatePos >> tagParser bDef) source . commentTextWithoutMarks $ c
+        tagData <- runParser (updatePos >> tagParser bDef) initialState source . commentTextWithoutMarks $ c
         return Tag{ startPos = startPos
                   , endPos   = endPos
                   , tagData  = tagData
@@ -170,11 +191,13 @@ fixme =
 -- |Constant.
 constant =
   do { m_reserved "const"
+     ; vmFilter <- vmFilterExpr
      ; name <- m_identifier
      ; m_reservedOp "="
      ; value <- constValue
-     ; return Constant{ name  = name
-                      , value = value
+     ; return Constant{ name     = name
+                      , value    = value
+                      , vmFilter = vmFilter
                       }
      }
   where
@@ -186,25 +209,32 @@ constant =
 
 -- |Console object.
 console =
-  choice [ return ConsoleAlias    `ap` (m_reserved "conalias" >> m_stringLiteral)
-         , return ConsoleCommand  `ap` (m_reserved "concmd"   >> m_stringLiteral)
-         , return ConsoleVariable `ap` (m_reserved "convar"   >> m_stringLiteral)
+  choice [ conObj ConsoleAlias    "conalias"
+         , conObj ConsoleCommand  "concmd"
+         , conObj ConsoleVariable "convar"
          ]
+  where conObj t s = do { m_reserved s
+                        ; vmFilter <- vmFilterExpr
+                        ; name <- m_stringLiteral
+                        ; return $ t name vmFilter
+                        }
 
 -- |Declaration.
 declaration =
-  do { (name, type') <- try namedTypedDeclaration
-     ; return Declaration{ name  = name
-                         , type' = type'
+  do { (name, type', vmFilter) <- try $ namedTypedDeclaration True
+     ; return Declaration{ name     = name
+                         , vmFilter = vmFilter
+                         , type'    = type'
                          }
      }
 
 -- |Name and type (name :: type).
-namedTypedDeclaration =
+namedTypedDeclaration withVMFilter =
   do { name <- m_identifier
+     ; vmFilter <- if withVMFilter then vmFilterExpr else return []
      ; m_reservedOp "::"
      ; type' <- anyType
-     ; return (name, type')
+     ; return (name, type', vmFilter)
      }
 
 -- |Extension
@@ -220,7 +250,14 @@ extension =
 
 -- |VM filter parser.
 vmFilterExpr =
-  option [] (m_parens $ m_commaSep1 m_identifier)
+  do { vmFilter <- m_parens $ m_commaSep1 m_identifier
+     ; modifyState (\s@TagState{} -> s{ lastVMFilter = vmFilter })
+     ; return vmFilter
+     }
+  <|>
+  do { st <- getState
+     ; return $ lastVMFilter st
+     }
 
 -- |Builtin function parser.
 builtin bDef =
@@ -255,9 +292,9 @@ signature =
   (return     id `ap` sigWithArgs)
 
   where
-    sigWithArgs = try (do { (name, type') <- m_parens namedTypedDeclaration
+    sigWithArgs = try (do { (name, type', _) <- m_parens $ namedTypedDeclaration False
                           ; m_reservedOp "->"
-                          ; tail          <- sigWithArgs
+                          ; tail <- sigWithArgs
                           ; return $ Arg name type' tail
                           })
                   <|>
@@ -284,7 +321,7 @@ signature =
 
     -- OptArgs
     optArgs = optArg <|> varArg0 <|> varArg1 <?> "optional arguments"
-    optArg = do { (name, type') <- m_braces namedTypedDeclaration
+    optArg = do { (name, type', _) <- m_braces $ namedTypedDeclaration False
                 ; m_reservedOp "->"
                 ; tail <- optionMaybe optArg
                 ; return $ OptArg name type' tail
