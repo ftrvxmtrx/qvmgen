@@ -64,10 +64,6 @@ data TagData =
   | ExtensionAddition String VMFilter
   -- |FIXME tag.
   | Fixme String
-  -- |Parse error.
-  | TagError{ relatedData :: TagData -- ^Data related to the error.
-            , errorMsg    :: String  -- ^Error message.
-            }
   deriving Show
 
 -- |Constant value.
@@ -181,19 +177,18 @@ constant =
                       , value = value
                       }
      }
-
--- |Constant value.
-constValue =
-  choice [ return ConstFloat   `ap` try m_float
-         , return ConstInteger `ap` m_integer
-         , return ConstString  `ap` m_stringLiteral
-         ]
+  where
+    constValue =
+      choice [ return ConstFloat   `ap` try m_float
+             , return ConstInteger `ap` m_integer
+             , return ConstString  `ap` m_stringLiteral
+             ]
 
 -- |Console object.
 console =
   choice [ return ConsoleAlias    `ap` (m_reserved "conalias" >> m_stringLiteral)
-         , return ConsoleVariable `ap` (m_reserved "convar"   >> m_stringLiteral)
          , return ConsoleCommand  `ap` (m_reserved "concmd"   >> m_stringLiteral)
+         , return ConsoleVariable `ap` (m_reserved "convar"   >> m_stringLiteral)
          ]
 
 -- |Declaration.
@@ -223,20 +218,6 @@ extension =
      }
   <?> "extension"
 
--- |Base types parser.
-baseType =
-  choice [ bt "bool"   QBool
-         , bt "entity" QEntity
-         , bt "float"  QFloat
-         , bt "int"    QInt
-         , bt "string" QString
-         , bt "vector" QVector
-         , return QFunc `ap` m_parens signature
-         ]
-  <?> "base type"
-  where
-    bt s t = m_reserved s >> return t
-
 -- |VM filter parser.
 vmFilterExpr =
   option [] (m_parens $ m_commaSep1 m_identifier)
@@ -244,24 +225,24 @@ vmFilterExpr =
 -- |Builtin function parser.
 builtin bDef =
   do { (hasTest, index) <- try testAndIndex
-     ; name <- m_identifier
-     ; vmFilter <- vmFilterExpr
+     ; name             <- m_identifier
+     ; vmFilter         <- vmFilterExpr
      ; m_reservedOp "::"
-     ; sig <- signature
-     ; let t = Builtin{ index    = index
-                      , cFunc    = "<invalid>"
-                      , name     = name
-                      , sig      = sig
-                      , hasTest  = hasTest
-                      , vmFilter = vmFilter
-                      } in
-       case bDef of
-         (Just f@(A.FunDef _ _ _)) -> return t{ cFunc = identToString . A.declIdent $ f }
-         _                         -> return TagError{ relatedData = t
-                                                     , errorMsg    = "no builtin definition after tag"
-                                                     }
+     ; rest hasTest index name vmFilter bDef
      }
   where
+    rest hasTest index name vmFilter (Just f@(A.FunDef _ _ _)) =
+      do { sig <- signature <?> "signature"
+         ; return Builtin{ index    = index
+                         , cFunc    = identToString . A.declIdent $ f
+                         , name     = name
+                         , sig      = sig
+                         , hasTest  = hasTest
+                         , vmFilter = vmFilter
+                         }
+         }
+    rest _ _ _ _ Nothing =
+      unexpected "tag with no builtin definition"
     testAndIndex = do { hasTest <- liftM isJust $ optionMaybe $ char 'T'
                       ; index   <- between (m_reservedOp "#") (m_reservedOp "=") m_integer
                       ; return (hasTest, index)
@@ -272,7 +253,6 @@ signature =
   (return Return `ap` (m_reserved "()" >> m_reservedOp "->" >> sigRet))
   <|>
   (return     id `ap` sigWithArgs)
-  <?> "function signature"
 
   where
     sigWithArgs = try (do { (name, type') <- m_parens namedTypedDeclaration
@@ -333,6 +313,18 @@ anyType =
     typeAnyValue = return (const AnyValue) `ap` m_reserved "any"
     typeField    = return           Field  `ap` (char '.' >> baseType)
     typeAnyField = return (const AnyField) `ap` (char '.' >> m_reserved "any")
+    baseType =
+      choice [ bt "bool"   QBool
+             , bt "entity" QEntity
+             , bt "float"  QFloat
+             , bt "int"    QInt
+             , bt "string" QString
+             , bt "vector" QVector
+             , return QFunc `ap` m_parens signature
+             ]
+      <?> "base type"
+      where
+        bt s t = m_reserved s >> return t
 
 -- |Main token parser for Parsec.
 TokenParser{ identifier    = m_identifier
