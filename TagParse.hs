@@ -45,9 +45,9 @@ data TagData =
   -- | Comment.
   | Comment String
   -- |Definition of a constant.
-  | Constant{ name     :: String     -- ^Name of the constant.
+  | Constant{ vmFilter :: VMFilter
+            , name     :: String     -- ^Name of the constant.
             , value    :: ConstValue -- ^Value of the constant.
-            , vmFilter :: VMFilter
             }
   -- |Declaration.
   | Declaration{ name     :: String   -- ^Name of the declaration.
@@ -55,16 +55,16 @@ data TagData =
                , type'    :: Type     -- ^Type of the declaration.
                }
   -- |Console alias.
-  | ConsoleAlias{ name     :: String
-                , vmFilter :: VMFilter
+  | ConsoleAlias{ vmFilter :: VMFilter
+                , name     :: String
                 }
   -- |Console command.
-  | ConsoleCommand{ name     :: String
-                  , vmFilter :: VMFilter
+  | ConsoleCommand{ vmFilter :: VMFilter
+                  , name     :: String
                   }
   -- |Console variable.
-  | ConsoleVariable{ name     :: String
-                   , vmFilter :: VMFilter
+  | ConsoleVariable{ vmFilter :: VMFilter
+                   , name     :: String
                    }
   -- |Extension.
   | Extension{ name     :: String
@@ -155,11 +155,7 @@ getInterval =
 
 -- |Comment parser. It returns either a tag or a comment not attached to any tag.
 tagParser bDef =
-  do { tags <- (do { optional m_whiteSpace
-                   ; tag bDef
-                   }) `manyTill` eof
-     ; return tags
-     }
+  (optional m_whiteSpace >> tag bDef) `manyTill` eof
 
 -- |Tag parser.
 tag bDef =
@@ -175,14 +171,11 @@ tag bDef =
 
 -- |Comment. Possibly attached to a tag.
 comment =
-  do { m_reservedOp "//"
-     ; c <- anyChar `manyTill` newline
-     ; return $ Comment c
-     }
-  <|>
-  do { c <- anyChar `manyTill` (try $ do { newline; newline } <|> do { eof; return '\n' })
-     ; return $ Comment c
-     }
+  return Comment `ap` ((m_reservedOp "//" >> anyChar `manyTill` newline)
+                       <|>
+                       (anyChar `manyTill` (try (newline >> skipMany1 newline)
+                                            <|>
+                                            eof)))
 
 -- |"FIXME" tag.
 fixme =
@@ -190,16 +183,10 @@ fixme =
 
 -- |Constant.
 constant =
-  do { m_reserved "const"
-     ; vmFilter <- vmFilterExpr
-     ; name <- m_identifier
-     ; m_reservedOp "="
-     ; value <- constValue
-     ; return Constant{ name     = name
-                      , value    = value
-                      , vmFilter = vmFilter
-                      }
-     }
+  return Constant
+  `ap` (m_reserved "const" >> vmFilterExpr)
+  `ap` m_identifier
+  `ap` (m_reservedOp "=" >> constValue)
   where
     constValue =
       choice [ return ConstFloat   `ap` try m_float
@@ -213,20 +200,12 @@ console =
          , conObj ConsoleCommand  "concmd"
          , conObj ConsoleVariable "convar"
          ]
-  where conObj t s = do { m_reserved s
-                        ; vmFilter <- vmFilterExpr
-                        ; name <- m_stringLiteral
-                        ; return $ t name vmFilter
-                        }
+  where conObj t s =
+          return t `ap` (m_reserved s >> vmFilterExpr) `ap` m_stringLiteral
 
 -- |Declaration.
 declaration =
-  do { (name, type', vmFilter) <- try $ namedTypedDeclaration True
-     ; return Declaration{ name     = name
-                         , vmFilter = vmFilter
-                         , type'    = type'
-                         }
-     }
+  try $ namedTypedDeclaration True
 
 -- |Name and type (name :: type).
 namedTypedDeclaration withVMFilter =
@@ -234,7 +213,10 @@ namedTypedDeclaration withVMFilter =
      ; vmFilter <- if withVMFilter then vmFilterExpr else return []
      ; m_reservedOp "::"
      ; type' <- anyType
-     ; return (name, type', vmFilter)
+     ; return Declaration{ name     = name
+                         , vmFilter = vmFilter
+                         , type'    = type'
+                         }
      }
 
 -- |Extension
@@ -292,10 +274,10 @@ signature =
   (return     id `ap` sigWithArgs)
 
   where
-    sigWithArgs = try (do { (name, type', _) <- m_parens $ namedTypedDeclaration False
+    sigWithArgs = try (do { decl <- m_parens $ namedTypedDeclaration False
                           ; m_reservedOp "->"
                           ; tail <- sigWithArgs
-                          ; return $ Arg name type' tail
+                          ; return $ Arg (name decl) (type' decl) tail
                           })
                   <|>
                   try (do { type' <- anyType
@@ -316,10 +298,10 @@ signature =
 
     -- OptArgs
     optArgs = optArg <|> varArg0 <|> varArg1 <?> "optional arguments"
-    optArg = do { (name, type', _) <- m_braces $ namedTypedDeclaration False
+    optArg = do { decl <- m_braces $ namedTypedDeclaration False
                 ; m_reservedOp "->"
                 ; tail <- optionMaybe optArg
-                ; return $ OptArg name type' tail
+                ; return $ OptArg (name decl) (type' decl) tail
                 }
     varArg0 = do { m_reservedOp "..."
                  ; type' <- option AnyValue anyType
