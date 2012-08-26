@@ -304,14 +304,9 @@ signature =
                           ; return $ Arg "" type' tail
                           })
                   <|>
-                  try (do { args <- optArgs
-                          ; ret  <- sigRet
-                          ; return $ OptArgs args ret
-                          })
+                  try (return OptArgs `ap` optArgs `ap` sigRet)
                   <|>
-                  do { ret <- sigRet
-                     ; return $ Return ret
-                     }
+                  return Return `ap` sigRet
                   <?> "function signature with args"
 
     sigRet = (return (const Nothing) `ap` m_reserved "()")
