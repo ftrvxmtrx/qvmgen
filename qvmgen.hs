@@ -1,7 +1,7 @@
 -- |qvmgen generates Quake VM code and documentation based on builtins, extensions, etc.
 module Main (main) where
 
-import Control.Monad (forM_)
+import qualified Control.Monad.Parallel as P
 
 import Read
 
@@ -30,4 +30,5 @@ qvmgenOpts argv =
 main :: IO ()
 main = do
   (args, cflags) <- getArgs >>= qvmgenOpts
-  zip [x | Input x <- args] [x | Output x <- args] `forM_` \(source, _) -> readFrom cflags source
+  io <- return $ zip [x | Input x <- args] [x | Output x <- args]
+  P.sequence_ $ map (\(source, _) -> readFrom cflags source) io

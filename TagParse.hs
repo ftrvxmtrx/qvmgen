@@ -1,6 +1,10 @@
 -- |Quake VM tags parser.
 module TagParse (Tag(..),
                  TagData(..),
+                 Sig(..),
+                 BaseType(..),
+                 Type(..),
+                 OptArgs(..),
                  getTags) where
 
 import Builtin
